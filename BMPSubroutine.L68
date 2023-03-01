@@ -1,0 +1,300 @@
+00000000 Starting Address
+Assembler used: EASy68K Editor/Assembler v5.16.01
+Created On: 10/19/2022 3:29:08 PM
+
+00000000                             1  ***********************BMP FILE FORMAT CONSTANTS*******************
+00000000  =0000000A                  2  TO_PIXEL_OFFSET EQU 10  *BMP File format standard offset to location holding the offset to the beginning of the actual pixel data. 
+00000000  =00000012                  3  TO_WIDTH        EQU 18  *BMP File format standard offset to Width of bitmap.
+00000000  =00000016                  4  TO_HEIGHT       EQU 22  *BMP File format standard offset to Height of bitmap.
+00000000  =00000006                  5  TO_END_OF_PIXEL_DATA    EQU 6 *This is the value of the offset from the end of the BMP file to the end of the pixel data. This is used because we start rendering from the top right which in absolute terms, is the bottom of the pixel data.
+00000000  =0000424D                  6  BMP_SIGNATURE   EQU $424D
+00000000                             7  
+00000000                             8  ****************************TRAP CODES*****************************
+00000000  =00000021                  9  WINDOW_SIZE_ADJUSTMENT_TRAP EQU 33
+00000000  =00000050                 10  SET_PEN_COLOR_TRAP  EQU 80
+00000000  =00000052                 11  DRAW_PIXEL_TRAP EQU 82
+00000000  =0000000D                 12  PRINT_STRING_TRAP EQU 13
+00000000  =000000FF                 13  RED EQU $000000FF
+00000000                            14  
+00001000                            15      ORG $1000
+00001000                            16  ClearValues:
+00001000  4279 0000122C             17      clr.w   WIDTH
+00001006  4279 0000122E             18      clr.w   HEIGHT              
+0000100C  42B9 00001230             19      clr.l   WIDTH_OFFSET        
+00001012  42B9 00001234             20      clr.l   ROW_OFFSET         
+00001018  42B9 00001238             21      clr.l   EFFECTIVE_HEIGHT    
+0000101E  4279 0000123C             22      clr.w   EFFECTIVE_CHUNK_X      
+00001024  42B9 00001242             23      clr.l   CHUNK_X         
+0000102A  42B9 00001246             24      clr.l   CHUNK_Y         
+00001030  42B9 0000124A             25      clr.l   CHUNK_WIDTH      
+00001036  42B9 0000124E             26      clr.l   CHUNK_HEIGHT      
+0000103C  42B9 00001252             27      clr.l   DISPLAY_X           
+00001042  42B9 00001256             28      clr.l   DISPLAY_Y
+00001048  4E75                      29      rts           
+0000104A                            30  StandardSwap:               *Standard Swap takes the little endian formatted numbers from the bitmap data and converts them into big endian so that we can handle the given data such as Width,Height, and Offset.
+0000104A  202F 000C                 31      move.l 12(sp),d0
+0000104E  E058                      32      ror.w   #8,d0           *This is done by first rotating the right most word of data and then swapping the words contained in the long and then repeating the rotation. This effectively reverses the waythe number was stored in the bitmap data. 
+00001050  4840                      33      swap.w  d0
+00001052  E058                      34      ror.w   #8,d0
+00001054                            35      
+00001054  4E75                      36      rts
+00001056                            37      
+00001056                            38  PixelSwap:
+00001056  202F 000C                 39      move.l  12(sp),d0        *The pixel data must be handled differently from how the standard numbers are handled. 
+0000105A  E080                      40      asr.l   #8,d0           *We want to make sure that the alpha channel value is the left most digit. As it is stored now it is not. To fix this we need to do an arithmetic shift right by 8 (The size of a byte).
+0000105C  4840                      41      swap.w  d0
+0000105E  E058                      42      ror.w   #8,d0
+00001060  4200                      43      clr.b   d0              *One observed issue was that the right shift can occasionlly lead to non-zero values. Any non-zero value results in incorrect rendering.
+00001062  E058                      44      ror.w   #8,d0           *For our purposes we will alleviate this by removing the extraneous alpha channel data and setting it to zero.
+00001064  4840                      45      swap.w  d0           
+00001066                            46      
+00001066  4E75                      47      rts
+00001068                            48  
+00001068                            49  DrawBitmapChunk:
+00001068  23EF 0008 00001242        50      move.l  8(sp),CHUNK_X
+00001070  23EF 000C 00001246        51      move.l  12(sp),CHUNK_Y
+00001078  23EF 0010 0000124A        52      move.l  16(sp),CHUNK_WIDTH
+00001080  23EF 0014 0000124E        53      move.l  20(sp),CHUNK_HEIGHT
+00001088  23EF 0018 00001252        54      move.l  24(sp),DISPLAY_X
+00001090  23EF 001C 00001256        55      move.l  28(sp),DISPLAY_Y
+00001098  23EF 0020 00001432        56      move.l  32(sp),BitmapEndpoint
+000010A0                            57  
+000010A0                            58  *Verify the chosen file is a BMP file    
+000010A0  3010                      59      move.w  (a0),d0
+000010A2  B07C 424D                 60      cmp.w   #BMP_SIGNATURE,d0
+000010A6  6600 0176                 61      bne     InvalidFile
+000010AA                            62      
+000010AA                            63  *WIDTH
+000010AA  2248                      64      move.l  a0,a1               *We manipulate the address register using the TO_WIDTH value to point to the Width information for the bitmap file. We use the Standard Swap here to get the correct value.
+000010AC  D3FC 00000012             65      add.l   #TO_WIDTH,a1
+000010B2  2611                      66      move.l  (a1),d3
+000010B4  2F43 0008                 67      move.l  d3,8(sp)
+000010B8  4EB8 104A                 68      jsr     StandardSwap
+000010BC  2600                      69      move.l  d0,d3
+000010BE  33C3 0000122C             70      move.w  d3,WIDTH            *We store the result into WIDTH.
+000010C4                            71  
+000010C4                            72  *HEIGHT
+000010C4  2248                      73      move.l  a0,a1               *We manipulate the address register using the TO_HEIGHT value to point to the Height information for the bitmap file. We use the Standard Swap here to get the correct value.
+000010C6  D3FC 00000016             74      add.l   #TO_HEIGHT,a1
+000010CC  2E11                      75      move.l  (a1),d7
+000010CE  2F47 0008                 76      move.l  d7,8(sp)
+000010D2  4EB8 104A                 77      jsr     StandardSwap
+000010D6  2E00                      78      move.l  d0,d7
+000010D8  33C7 0000122E             79      move.w  d7,HEIGHT           *We store the result into HEIGHT
+000010DE                            80     
+000010DE                            81  *Find Initial Offset To Pixel Data
+000010DE  2279 00001432             82      move.l  BitmapEndpoint,a1
+000010E4  5D89                      83      sub.l   #6,a1
+000010E6  2683                      84      move.l  d3,(a3)
+000010E8  2A03                      85      move.l  d3,d5
+000010EA                            86      
+000010EA  4283                      87      clr.l   d3
+000010EC  4286                      88      clr.l   d6   
+000010EE                            89      
+000010EE                            90  DetermineEffectiveOffset:
+000010EE  42B9 0000123C             91      clr.l   EFFECTIVE_CHUNK_X                   *EFFECTIVE_CHUNK_X is the "actual" x value since we draw from right to left. However for conventional use, we allow input as if we were using the top left corner of the bitmap. This accounts for that
+000010F4                            92  ty.
+000010F4  23F9 00001242 0000123C    93      move.l  CHUNK_X,EFFECTIVE_CHUNK_X
+000010FE  2039 0000124A             94      move.l  CHUNK_WIDTH,d0
+00001104  D1B9 0000123C             95      add.l   d0,EFFECTIVE_CHUNK_X
+0000110A  3039 0000122C             96      move.w  WIDTH,d0
+00001110  90B9 0000123C             97      sub.l   EFFECTIVE_CHUNK_X,d0
+00001116  23C0 00001230             98      move.l  d0,WIDTH_OFFSET                     *WIDTH_OFFSET is used later to find the total number of bytes needed to skip to our desired position in the pixel data.
+0000111C  2039 00001246             99      move.l  CHUNK_Y,d0
+00001122                           100  
+00001122  C1F9 0000122C            101      muls     WIDTH,d0
+00001128  D0B9 00001230            102      add.l    WIDTH_OFFSET,d0                    *The total number of pixels to skip would be the CHUNK_Y value multiplied by the width since the amount of pixels in the rows we "pass" would be equal to CHUNK_Y · WIDTH 
+0000112E                           103      
+0000112E  E580                     104      asl.l   #2,d0                               *The pixel data is stored in longs so we can do an arithmetic shift left by 2 to multiply by 4. (This is because 2 to the second power is 4).         
+00001130  93C0                     105      sub.l   d0,a1
+00001132  5889                     106      add.l   #4,a1
+00001134                           107  
+00001134  4280                     108      clr.l   d0
+00001136  3039 0000122C            109      move.w  WIDTH,d0                            *Here we do something similar and determine a row offset.
+0000113C  90B9 0000124A            110      sub.l   CHUNK_WIDTH,d0                     *This is important because we need the row offset ot account for skipping parts of a row if your bitmap chunk spans a width that is less than the total width of the bitmap.
+00001142                           111  
+00001142                           112   
+00001142  E580                     113      asl.l   #2,d0
+00001144  5980                     114      sub.l   #4,d0
+00001146  23C0 00001234            115      move.l  d0,ROW_OFFSET
+0000114C                           116      
+0000114C  2A39 00001252            117      move.l  DISPLAY_X,d5                       *We add the DISPLAY_X and the CHUNK_WIDTH to start at the correct top right pixel to draw.
+00001152  DAB9 0000124A            118      add.l   CHUNK_WIDTH,d5
+00001158  2C39 00001256            119      move.l  DISPLAY_Y,d6
+0000115E  2639 00001252            120      move.l  DISPLAY_X,d3                   
+00001164                           121      
+00001164  23FC 00000000 00001238   122      move.l  #0,EFFECTIVE_HEIGHT  
+0000116E  2039 00001238            123      move.l  EFFECTIVE_HEIGHT,d0
+00001174                           124      
+00001174  23F9 0000124E 00001238   125      move.l  CHUNK_HEIGHT,EFFECTIVE_HEIGHT
+0000117E  2039 00001256            126      move.l  DISPLAY_Y,d0
+00001184  D1B9 00001238            127      add.l   d0,EFFECTIVE_HEIGHT         *We combine the CHUNK_HEIGHT and DISPLAY_Y so that the correct pixels are rendered in our output window.
+0000118A  2039 00001238            128      move.l  EFFECTIVE_HEIGHT,d0
+00001190                           129      
+00001190                           130  Draw:
+00001190  2211                     131      move.l  (a1),d1
+00001192  2F41 0008                132      move.l  d1,8(sp)
+00001196  4EB8 1056                133      jsr     PixelSwap
+0000119A  2200                     134      move.l  d0,d1           *We use the Pixel Swap to correctly arrange the pixel data.
+0000119C                           135      
+0000119C                           136      
+0000119C  103C 0050                137      move.b  #SET_PEN_COLOR_TRAP,d0
+000011A0  4E4F                     138      trap #15                *We set the Pen Color to the retrieved pixel color.
+000011A2  3205                     139      move.w  d5,d1
+000011A4  3406                     140      move.w  d6,d2
+000011A6  103C 0052                141      move.b  #DRAW_PIXEL_TRAP,d0          *We use d5 and d6 from earlier to begin drawing our chunk.
+000011AA  4E4F                     142      trap #15
+000011AC  5989                     143      sub.l   #4,a1
+000011AE  5345                     144      sub.w   #1,d5
+000011B0  BA43                     145      cmp.w   d3,d5           *We wait until we run out of pixels width-wise until we then move to the next row.
+000011B2  6CDC                     146      bge     Draw
+000011B4                           147  
+000011B4                           148  NextRow:
+000011B4  93F9 00001234            149      sub.l   ROW_OFFSET,a1   *We subtract the address register by the ROW_OFFSET to maintain image accuracy.
+000011BA  2A39 0000124A            150      move.l  CHUNK_WIDTH,d5
+000011C0  DAB9 00001252            151      add.l   DISPLAY_X,d5
+000011C6  5246                     152      add.w   #1,d6
+000011C8  2039 00001238            153      move.l  EFFECTIVE_HEIGHT,d0
+000011CE  BC80                     154      cmp.l   d0,d6
+000011D0  66BE                     155      bne     Draw            *We continue the process until we have reached the last row and then exit the program with our drawn bitmap on the screen.
+000011D2  4EB8 1000                156      jsr     ClearValues 
+000011D6  4E75                     157      rts
+000011D8                           158      
+000011D8                           159  ChunkSizeErrorX:
+000011D8  700D                     160      move.l  #PRINT_STRING_TRAP,d0                              *If we encounter an out of bounds situation, we print an error to the screen and terminate the program.
+000011DA  43F9 0000129A            161      lea     OUT_OF_BOUNDS_TEXT_X,a1
+000011E0  4E4F                     162      trap #15
+000011E2  FFFF FFFF                163      SIMHALT
+000011E6                           164      
+000011E6                           165  ChunkSizeErrorY:
+000011E6  700D                     166      move.l  #PRINT_STRING_TRAP,d0                              *If we encounter an out of bounds situation, we print an error to the screen and terminate the program.
+000011E8  43F9 000012F2            167      lea     OUT_OF_BOUNDS_TEXT_Y,a1
+000011EE  4E4F                     168      trap #15
+000011F0  FFFF FFFF                169      SIMHALT
+000011F4                           170      
+000011F4                           171  DisplayBoundsErrorX:
+000011F4  700D                     172      move.l  #PRINT_STRING_TRAP,d0                              *If we encounter an out of bounds situation, we print an error to the screen and terminate the program.
+000011F6  43F9 0000134A            173      lea     DISPLAY_OUT_OF_BOUNDS_TEXT_X,a1
+000011FC  4E4F                     174      trap #15
+000011FE  FFFF FFFF                175      SIMHALT
+00001202                           176      
+00001202                           177  DisplayBoundsErrorY:
+00001202  700D                     178      move.l  #PRINT_STRING_TRAP,d0                              *If we encounter an out of bounds situation, we print an error to the screen and terminate the program.
+00001204  43F9 0000139A            179      lea     DISPLAY_OUT_OF_BOUNDS_TEXT_Y,a1
+0000120A  4E4F                     180      trap #15
+0000120C  FFFF FFFF                181      SIMHALT
+00001210                           182  NegativeHandler:
+00001210  700D                     183      move.l  #PRINT_STRING_TRAP,d0                              *If we encounter a negative user input, we will kindly yet firmly tell them to correct it.
+00001212  43F9 000013EA            184      lea     NEGATIVE_HANDLER_TEXT,a1
+00001218  4E4F                     185      trap #15
+0000121A  FFFF FFFF                186      SIMHALT
+0000121E                           187  InvalidFile:
+0000121E  700D                     188      move.l  #PRINT_STRING_TRAP,d0
+00001220  43F9 0000125A            189      lea     INVALID_TEXT,a1
+00001226  4E4F                     190      trap #15
+00001228  FFFF FFFF                191      SIMHALT
+0000122C                           192                                               
+0000122C                           193  WIDTH               ds.w $1
+0000122E                           194  HEIGHT              ds.w $1
+00001230                           195  WIDTH_OFFSET        ds.l $1
+00001234                           196  ROW_OFFSET          ds.l $1
+00001238                           197  EFFECTIVE_HEIGHT    ds.l $1
+0000123C                           198  EFFECTIVE_CHUNK_X   ds.w $1
+0000123E                           199  PREVIOUS_COLOR      ds.l $1
+00001242                           200  CHUNK_X             ds.l $1
+00001246                           201  CHUNK_Y             ds.l $1
+0000124A                           202  CHUNK_WIDTH         ds.l $1
+0000124E                           203  CHUNK_HEIGHT        ds.l $1
+00001252                           204  DISPLAY_X           ds.l $1
+00001256                           205  DISPLAY_Y           ds.l $1
+0000125A= 4552524F 523A2046 ...    206  INVALID_TEXT  dc.l 'ERROR: FILE NOT RECOGNIZED AS BMP. Please try another file',0
+0000129A= 4552524F 523A2043 ...    207  OUT_OF_BOUNDS_TEXT_X  dc.l 'ERROR: CHUNK_X Sorry, the desired bitmap chunk is out of bounds. Please try again.',0
+000012F2= 4552524F 523A2043 ...    208  OUT_OF_BOUNDS_TEXT_Y  dc.l 'ERROR: CHUNK_Y Sorry, the desired bitmap chunk is out of bounds. Please try again.',0
+0000134A= 4552524F 523A2044 ...    209  DISPLAY_OUT_OF_BOUNDS_TEXT_X  dc.l 'ERROR: DISPLAY_X Current display parameters will not draw full bitmap Chunk',0
+0000139A= 4552524F 523A2044 ...    210  DISPLAY_OUT_OF_BOUNDS_TEXT_Y  dc.l 'ERROR: DISPLAY_Y Current display parameters will not draw full bitmap Chunk',0
+000013EA= 4552524F 523A204F ...    211  NEGATIVE_HANDLER_TEXT  dc.l 'ERROR: ONE OR MORE NEGATIVE INPUTS. Please correct and try again.',0
+00001432                           212  BitmapEndpoint  ds.l    $1
+00001436                           213    
+00001436                           214  
+00001436                           215      ;END START     
+00001436                           216  
+00001436                           217      
+00001436                           218      
+00001436                           219  
+00001436                           220  
+00001436                           221  
+00001436                           222  
+00001436                           223  
+00001436                           224  
+00001436                           225  
+00001436                           226  
+00001436                           227  
+00001436                           228  
+00001436                           229  
+00001436                           230  
+00001436                           231  
+00001436                           232  
+00001436                           233  
+00001436                           234  
+00001436                           235  
+00001436                           236  
+00001436                           237  
+00001436                           238  
+00001436                           239  
+00001436                           240  
+00001436                           241  
+00001436                           242  
+00001436                           243  
+Line 244 WARNING: END directive missing, starting address not set
+
+No errors detected
+1 warning generated
+
+
+SYMBOL TABLE INFORMATION
+Symbol-name         Value
+-------------------------
+BITMAPENDPOINT      1432
+BMP_SIGNATURE       424D
+CHUNKSIZEERRORX     11D8
+CHUNKSIZEERRORY     11E6
+CHUNK_HEIGHT        124E
+CHUNK_WIDTH         124A
+CHUNK_X             1242
+CHUNK_Y             1246
+CLEARVALUES         1000
+DETERMINEEFFECTIVEOFFSET  10EE
+DISPLAYBOUNDSERRORX  11F4
+DISPLAYBOUNDSERRORY  1202
+DISPLAY_OUT_OF_BOUNDS_TEXT_X  134A
+DISPLAY_OUT_OF_BOUNDS_TEXT_Y  139A
+DISPLAY_X           1252
+DISPLAY_Y           1256
+DRAW                1190
+DRAWBITMAPCHUNK     1068
+DRAW_PIXEL_TRAP     52
+EFFECTIVE_CHUNK_X   123C
+EFFECTIVE_HEIGHT    1238
+HEIGHT              122E
+INVALIDFILE         121E
+INVALID_TEXT        125A
+NEGATIVEHANDLER     1210
+NEGATIVE_HANDLER_TEXT  13EA
+NEXTROW             11B4
+OUT_OF_BOUNDS_TEXT_X  129A
+OUT_OF_BOUNDS_TEXT_Y  12F2
+PIXELSWAP           1056
+PREVIOUS_COLOR      123E
+PRINT_STRING_TRAP   D
+RED                 FF
+ROW_OFFSET          1234
+SET_PEN_COLOR_TRAP  50
+STANDARDSWAP        104A
+TO_END_OF_PIXEL_DATA  6
+TO_HEIGHT           16
+TO_PIXEL_OFFSET     A
+TO_WIDTH            12
+TY.                 10F4
+WIDTH               122C
+WIDTH_OFFSET        1230
+WINDOW_SIZE_ADJUSTMENT_TRAP  21
