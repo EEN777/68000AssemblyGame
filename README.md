@@ -4,6 +4,8 @@ This is a demonstration of low-level data manipulation to create a structured pr
 
 The assets, including audio, were sourced through Envato Elements with my subscription. 
 
+The program also uses a bitmap subroutine that I authored that manually reads through a given bitmaps information and displays the desired chuck of the bitmap at any position on the screen.
+
 The program was written using an emulator for the Motorola 68000 called Easy68K. 
 http://www.easy68k.com/
 
