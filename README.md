@@ -14,7 +14,7 @@ Below is the description of the project found within the main Assembly file.
  Description: Game Name - SPACE JUNKERS
                In this game you play as one of two character, you are either JERRY JUNKER (Player 1, WASD) or GARY GARBAGE (Player 2,IJKL).
                The premise of the game is that you are space-garbage collectors that are in a competition to see who can catch the most falling
-               space-garbage. The garbage (In-code referref to as "Messages") is being pulled in by an force beam that increases its pull over time.
+               space-garbage. The garbage (In-code referred to as "Messages") is being pulled in by an force beam that increases its pull over time.
                As such, the speed of the falling garbage will increase more and more over time until the beam reaches full power (In-program, until we hit Terminal Velocity).
                The game also includes a few voice lines as well.
                I will continue by describing how this game meets each of the requirements.
